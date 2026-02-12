@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from 'firebase/auth';
-import { setAuthToken } from '../api/client';
-import { firebaseApp } from '../firebase';
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { auth } from '../firebase';
 import { AuthUser, UserRole } from '../types';
 
 interface AuthContextValue {
@@ -15,7 +14,7 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 const storageKey = 'water-velocity-auth';
-const auth = getAuth(firebaseApp);
+// auth imported from firebase.ts
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -34,7 +33,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (email: string, password: string) => {
     const cred = await signInWithEmailAndPassword(auth, email, password);
     const token = await cred.user.getIdToken();
-    setAuthToken(token);
     const authed: AuthUser = {
       uid: cred.user.uid,
       email: cred.user.email || email,
@@ -48,7 +46,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const register = async (email: string, password: string, role: UserRole) => {
     const cred = await createUserWithEmailAndPassword(auth, email, password);
     const token = await cred.user.getIdToken();
-    setAuthToken(token);
     const authed: AuthUser = {
       uid: cred.user.uid,
       email: cred.user.email || email,
