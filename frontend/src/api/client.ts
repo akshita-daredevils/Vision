@@ -1,13 +1,26 @@
 import {
   addDoc,
   collection,
+  doc,
   getDocs,
+  setDoc,
   orderBy,
   query,
   limit as fsLimit
 } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
-import { AlertItem, DatasetItem, InferenceResult, VelocityLog, VideoItem } from '../types';
+import {
+  AlertItem,
+  DatasetItem,
+  InferenceResult,
+  ModelFile,
+  NotificationItem,
+  RainLog,
+  SiteItem,
+  VelocityLog,
+  VideoItem,
+  WaterLevelLog
+} from '../types';
 import { auth, db, storage } from '../firebase';
 
 export const setAuthToken = () => undefined; // no-op in Firebase-only flow
@@ -153,13 +166,136 @@ export const inferenceApi = {
       await addDoc(collection(db, 'inference_logs'), {
         id: uid(),
         ...result,
-        userId: userId(),
+        userId: safeUserId(),
         createdAt: isoNow()
       });
     } catch (err) {
       console.error('Inference log write failed', err);
     }
     return { data: { data: result } };
+  }
+};
+
+export const modelsApi = {
+  upload: async (file: File, version?: string, notes?: string) => {
+    const id = uid();
+    const resolvedVersion = version || `v-${new Date().toISOString()}`;
+    const path = `models/${id}-${file.name}`;
+    const storageRef = ref(storage, path);
+    await uploadBytes(storageRef, file, { contentType: file.type });
+    const url = await getDownloadURL(storageRef);
+    const docBody = {
+      id,
+      name: file.name,
+      version: resolvedVersion,
+      status: 'staged',
+      uploadedAt: isoNow(),
+      sourceUrl: url,
+      notes,
+      userId: safeUserId()
+    } satisfies ModelFile & Record<string, unknown>;
+    await setDoc(doc(db, 'models', id), docBody);
+    return { data: { data: docBody } };
+  },
+  list: async () => {
+    const snap = await getDocs(query(collection(db, 'models'), orderBy('uploadedAt', 'desc')));
+    const items = snap.docs.map((d) => d.data() as ModelFile);
+    return { data: { data: items } };
+  }
+};
+
+export const notificationsApi = {
+  create: async (message: string, channel = 'simulated', type = 'test') => {
+    const id = uid();
+    const docBody = {
+      id,
+      type,
+      message,
+      channel,
+      delivered: true,
+      createdAt: isoNow(),
+      userId: safeUserId()
+    } satisfies NotificationItem & Record<string, unknown>;
+    await addDoc(collection(db, 'notifications'), docBody);
+    return { data: { data: docBody } };
+  },
+  list: async () => {
+    const snap = await getDocs(
+      query(collection(db, 'notifications'), orderBy('createdAt', 'desc'), fsLimit(200))
+    );
+    const items = snap.docs.map((d) => d.data() as NotificationItem);
+    return { data: { data: items } };
+  }
+};
+
+export const sitesApi = {
+  seed: async () => {
+    const id = uid();
+    const docBody = {
+      id,
+      name: `Site ${id.slice(0, 4)}`,
+      location: 'Sample River Bend',
+      lat: 0,
+      lon: 0,
+      status: 'online',
+      alertStatus: 'normal',
+      lastVelocity: Math.random() * 3,
+      lastWaterLevel: 0.4 + Math.random() * 0.6,
+      lastRainRate: Math.random() * 10,
+      lastHeartbeat: isoNow(),
+      userId: safeUserId()
+    } satisfies SiteItem & Record<string, unknown>;
+    await addDoc(collection(db, 'sites'), docBody);
+    return { data: { data: docBody } };
+  },
+  list: async () => {
+    const snap = await getDocs(query(collection(db, 'sites'), orderBy('lastHeartbeat', 'desc')));
+    const items = snap.docs.map((d) => d.data() as SiteItem);
+    return { data: { data: items } };
+  }
+};
+
+export const waterLevelApi = {
+  create: async (level: number, siteId?: string, timestamp?: string) => {
+    const id = uid();
+    const docBody = {
+      id,
+      siteId,
+      level,
+      timestamp: timestamp || isoNow(),
+      userId: safeUserId()
+    } satisfies WaterLevelLog & Record<string, unknown>;
+    await addDoc(collection(db, 'water_levels'), docBody);
+    return { data: { data: docBody } };
+  },
+  list: async () => {
+    const snap = await getDocs(
+      query(collection(db, 'water_levels'), orderBy('timestamp', 'desc'), fsLimit(200))
+    );
+    const items = snap.docs.map((d) => d.data() as WaterLevelLog);
+    return { data: { data: items } };
+  }
+};
+
+export const rainApi = {
+  create: async (rate: number, siteId?: string, timestamp?: string) => {
+    const id = uid();
+    const docBody = {
+      id,
+      siteId,
+      rate,
+      timestamp: timestamp || isoNow(),
+      userId: safeUserId()
+    } satisfies RainLog & Record<string, unknown>;
+    await addDoc(collection(db, 'rain_logs'), docBody);
+    return { data: { data: docBody } };
+  },
+  list: async () => {
+    const snap = await getDocs(
+      query(collection(db, 'rain_logs'), orderBy('timestamp', 'desc'), fsLimit(200))
+    );
+    const items = snap.docs.map((d) => d.data() as RainLog);
+    return { data: { data: items } };
   }
 };
 

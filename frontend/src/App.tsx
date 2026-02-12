@@ -7,6 +7,8 @@ import AlertsPage from './pages/AlertsPage';
 import DatasetsPage from './pages/DatasetsPage';
 import ModelPage from './pages/ModelPage';
 import AuthPage from './pages/AuthPage';
+import NotificationsPage from './pages/NotificationsPage';
+import SitesPage from './pages/SitesPage';
 
 const App = () => {
   return (
@@ -17,8 +19,10 @@ const App = () => {
         <Route path="/live" element={<LiveFeedPage />} />
         <Route path="/velocity" element={<VelocityAnalyticsPage />} />
         <Route path="/alerts" element={<AlertsPage />} />
+        <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/datasets" element={<DatasetsPage />} />
         <Route path="/model" element={<ModelPage />} />
+        <Route path="/sites" element={<SitesPage />} />
       </Route>
     </Routes>
   );

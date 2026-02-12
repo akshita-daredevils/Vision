@@ -6,6 +6,8 @@ const navItems = [
   { to: '/live', label: 'Live Feed' },
   { to: '/velocity', label: 'Velocity Analytics' },
   { to: '/alerts', label: 'Alerts' },
+  { to: '/notifications', label: 'Notifications' },
+  { to: '/sites', label: 'Sites & Health' },
   { to: '/datasets', label: 'Datasets' },
   { to: '/model', label: 'Model' }
 ];

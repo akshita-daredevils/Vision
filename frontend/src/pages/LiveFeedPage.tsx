@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import FileUpload from '../components/FileUpload';
 import { videoApi } from '../api/client';
 import { VideoItem } from '../types';
@@ -8,6 +8,8 @@ const LiveFeedPage = () => {
   const [uploading, setUploading] = useState(false);
   const [active, setActive] = useState<VideoItem | null>(null);
   const [error, setError] = useState('');
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const overlayRef = useRef<HTMLCanvasElement | null>(null);
 
   const load = async () => {
     try {
@@ -23,6 +25,49 @@ const LiveFeedPage = () => {
   useEffect(() => {
     load();
   }, []);
+
+  useEffect(() => {
+    const canvas = overlayRef.current;
+    const video = videoRef.current;
+    if (!canvas || !video) return;
+    const resize = () => {
+      canvas.width = video.clientWidth;
+      canvas.height = video.clientHeight;
+    };
+    resize();
+    const handleResize = () => resize();
+    window.addEventListener('resize', handleResize);
+
+    let raf = 0;
+    const draw = () => {
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const now = Date.now() / 1000;
+      const lines = 18;
+      for (let i = 0; i < lines; i++) {
+        const x = ((i * 73) % canvas.width) + (Math.sin(now + i) * 20);
+        const y = ((i * 37) % canvas.height) + (Math.cos(now * 0.5 + i) * 10);
+        const length = 30 + ((i * 11) % 40);
+        const angle = (now * 0.6 + i) % (Math.PI * 2);
+        const x2 = x + Math.cos(angle) * length;
+        const y2 = y + Math.sin(angle) * length;
+        const danger = length > 50;
+        ctx.strokeStyle = danger ? 'rgba(244, 63, 94, 0.8)' : 'rgba(56, 189, 248, 0.8)';
+        ctx.lineWidth = danger ? 2.4 : 1.4;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+      }
+      raf = requestAnimationFrame(draw);
+    };
+    raf = requestAnimationFrame(draw);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      cancelAnimationFrame(raf);
+    };
+  }, [active]);
 
   const onUpload = async (file: File) => {
     setError('');
@@ -50,7 +95,15 @@ const LiveFeedPage = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 rounded-lg border border-slate-200 bg-black aspect-video overflow-hidden">
           {active ? (
-            <video src={active.url} controls className="w-full h-full object-contain bg-black" />
+            <div className="relative w-full h-full">
+              <video
+                ref={videoRef}
+                src={active.url}
+                controls
+                className="w-full h-full object-contain bg-black"
+              />
+              <canvas ref={overlayRef} className="absolute inset-0 pointer-events-none mix-blend-screen" />
+            </div>
           ) : (
             <div className="h-full flex items-center justify-center text-slate-200">No video selected</div>
           )}
