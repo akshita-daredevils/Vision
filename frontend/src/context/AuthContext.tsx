@@ -1,5 +1,11 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import {
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  signInAnonymously,
+  signInWithEmailAndPassword,
+  signOut
+} from 'firebase/auth';
 import { auth } from '../firebase';
 import { AuthUser, UserRole } from '../types';
 
@@ -13,20 +19,34 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
-const storageKey = 'water-velocity-auth';
-// auth imported from firebase.ts
-
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const cached = localStorage.getItem(storageKey);
-    if (cached) {
-      const parsed: AuthUser = JSON.parse(cached);
-      setUser(parsed);
-    }
-    setLoading(false);
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (!firebaseUser) {
+        try {
+          await signInAnonymously(auth);
+        } catch (err) {
+          console.error('Anonymous sign-in failed', err);
+          setUser(null);
+          setLoading(false);
+        }
+        return;
+      }
+
+      const authed: AuthUser = {
+        uid: firebaseUser.uid,
+        email: firebaseUser.email || 'guest',
+        role: 'user',
+        token: await firebaseUser.getIdToken()
+      };
+      setUser(authed);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
   }, []);
 
   const login = async (email: string, password: string) => {
@@ -38,7 +58,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       token: await cred.user.getIdToken()
     };
     setUser(authed);
-    localStorage.setItem(storageKey, JSON.stringify(authed));
   };
 
   const register = async (email: string, password: string, role: UserRole) => {
@@ -50,14 +69,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       token: await cred.user.getIdToken()
     };
     setUser(authed);
-    localStorage.setItem(storageKey, JSON.stringify(authed));
   };
 
   const logout = () => {
     signOut(auth).catch(() => undefined);
     setUser(null);
-    setAuthToken(undefined);
-    localStorage.removeItem(storageKey);
   };
 
   const value = useMemo(
