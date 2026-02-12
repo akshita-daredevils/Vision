@@ -95,7 +95,12 @@ const LiveFeedPage = () => {
       }
       setInfo(`RAFT-small flow velocity ~${representative.toFixed(2)} m/s (p95). Alerts updated.`);
     } catch (err: any) {
-      setError(err?.message || err?.response?.data?.message || 'RAFT analysis failed');
+      const msg = err?.message || err?.response?.data?.message;
+      if (msg?.toString().includes('model load')) {
+        setError('RAFT model missing/blocked. Set VITE_RAFT_MODEL_URL or place raft-small.onnx (+ .onnx_data) in public/models.');
+      } else {
+        setError(msg || 'RAFT analysis failed');
+      }
     } finally {
       setAnalyzing(false);
     }

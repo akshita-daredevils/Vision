@@ -1,13 +1,43 @@
 import * as ort from 'onnxruntime-web';
 
-const MODEL_URL = 'https://huggingface.co/onnx-community/raft-small/resolve/main/raft-small.onnx';
-const WASM_BASE = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.0/dist/';
+const MODEL_CANDIDATES = [
+  import.meta.env.VITE_RAFT_MODEL_URL as string | undefined,
+  '/models/raft-small.onnx',
+  'https://huggingface.co/onnx-community/raft-small/resolve/main/raft-small.onnx',
+  'https://huggingface.co/onnx-community/raft-small/resolve/main/raft-small.onnx?download=1',
+  'https://cdn.jsdelivr.net/gh/huggingface/onnx-community@main/raft-small/raft-small.onnx'
+].filter(Boolean) as string[];
+
+const WASM_BASE = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.1/dist/';
 
 ort.env.wasm.wasmPaths = WASM_BASE;
-ort.env.wasm.numThreads = Math.min(4, typeof navigator !== 'undefined' && navigator.hardwareConcurrency ? navigator.hardwareConcurrency : 2);
-orth.env.wasm.simd = true;
+// Use single-threaded mode to avoid COOP/COEP requirements; override via Vite env if needed.
+const envThreads = import.meta.env.VITE_ORT_THREADS ? Number(import.meta.env.VITE_ORT_THREADS) : 1;
+ort.env.wasm.numThreads = Math.max(1, envThreads);
+ort.env.wasm.simd = true;
 
 let sessionPromise: Promise<ort.InferenceSession> | null = null;
+
+const tryLoadSession = async () => {
+  let lastErr: unknown;
+  for (const url of MODEL_CANDIDATES) {
+    try {
+      const session = await ort.InferenceSession.create(url, {
+        executionProviders: ['wasm'],
+        graphOptimizationLevel: 'all',
+        executionMode: 'parallel',
+        enableMemPattern: true,
+        enableCpuMemArena: true
+      });
+      console.info('[RAFT] loaded model from', url);
+      return session;
+    } catch (err) {
+      console.warn('[RAFT] failed to load', url, err);
+      lastErr = err;
+    }
+  }
+  throw lastErr || new Error('RAFT model load failed. Provide VITE_RAFT_MODEL_URL or place raft-small.onnx in public/models');
+};
 
 const percentile = (values: number[], p: number) => {
   if (!values.length) return 0;
@@ -42,13 +72,7 @@ const stackPair = (a: ort.Tensor<'float32'>, b: ort.Tensor<'float32'>) => {
 
 const loadSession = async () => {
   if (!sessionPromise) {
-    sessionPromise = ort.InferenceSession.create(MODEL_URL, {
-      executionProviders: ['wasm'],
-      graphOptimizationLevel: 'all',
-      executionMode: 'parallel',
-      enableMemPattern: true,
-      enableCpuMemArena: true
-    });
+    sessionPromise = tryLoadSession();
   }
   return sessionPromise;
 };
