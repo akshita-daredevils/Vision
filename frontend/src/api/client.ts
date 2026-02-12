@@ -47,6 +47,12 @@ const uploadWithTimeout = async (storagePath: string, file: File, timeoutMs = 15
   }
 };
 
+const latestDoc = async <T>(col: string, orderField: string) => {
+  const snap = await getDocs(query(collection(db, col), orderBy(orderField, 'desc'), fsLimit(1)));
+  const doc = snap.docs.at(0);
+  return doc ? (doc.data() as T) : null;
+};
+
 export const videoApi = {
   upload: async (file: File) => {
     const id = uid();
@@ -160,9 +166,22 @@ export const alertsApi = {
 
 export const inferenceApi = {
   velocity: async (velocity: number, source: string) => {
-    const warn = Number(import.meta.env.VITE_VELOCITY_WARN || '2.5');
+    const model = await latestDoc<ModelFile>('models', 'uploadedAt');
+    const dataset = await latestDoc<DatasetItem>('datasets', 'createdAt');
+    let warn = Number(import.meta.env.VITE_VELOCITY_WARN || '2.5');
     const dangerEnv = import.meta.env.VITE_VELOCITY_DANGER;
-    const danger = dangerEnv ? Number(dangerEnv) : warn * 1.5;
+    let danger = dangerEnv ? Number(dangerEnv) : warn * 1.5;
+
+    // Adjust thresholds based on available data/models
+    if (model) {
+      warn *= 0.95;
+      danger *= 0.95;
+    }
+    if (dataset?.size && dataset.size > 3_000_000) {
+      warn *= 0.9;
+      danger *= 0.9;
+    }
+
     let label: 'normal' | 'warning' | 'danger' = 'normal';
     if (velocity >= danger) label = 'danger';
     else if (velocity >= warn) label = 'warning';
@@ -173,17 +192,34 @@ export const inferenceApi = {
       label,
       score,
       thresholds: { warn, danger },
-      explanation: `Heuristic: warn >= ${warn} m/s, danger >= ${danger} m/s`
+      explanation: `Heuristic: warn >= ${warn.toFixed(2)} m/s, danger >= ${danger.toFixed(2)} m/s${model ? ` | model: ${model.name}` : ''}${dataset ? ` | dataset: ${dataset.name}` : ''}`
     };
     try {
       await addDoc(collection(db, 'inference_logs'), {
         id: uid(),
         ...result,
+        modelId: model?.id,
+        datasetId: dataset?.id,
         userId: safeUserId(),
         createdAt: isoNow()
       });
     } catch (err) {
       console.error('Inference log write failed', err);
+    }
+
+    if (label === 'warning') {
+      try {
+        await alertsApi.create(warn, velocity, 'warning');
+      } catch (err) {
+        console.error('Alert write failed (warning)', err);
+      }
+    }
+    if (label === 'danger') {
+      try {
+        await alertsApi.create(danger, velocity, 'danger');
+      } catch (err) {
+        console.error('Alert write failed (danger)', err);
+      }
     }
     return { data: { data: result } };
   }
@@ -202,6 +238,34 @@ export const modelsApi = {
       status: 'staged',
       uploadedAt: isoNow(),
       sourceUrl: url,
+      mainFilePath: path,
+      notes,
+      userId: safeUserId()
+    } satisfies ModelFile & Record<string, unknown>;
+    await setDoc(doc(db, 'models', id), docBody);
+    return { data: { data: docBody } };
+  },
+  uploadBundle: async (files: File[], version?: string, notes?: string) => {
+    const id = uid();
+    const resolvedVersion = version || `v-${new Date().toISOString()}`;
+    const mainExts = ['.onnx', '.json', '.bin', '.tflite'];
+    const uploaded: { name: string; path: string; size?: number; contentType?: string; url: string }[] = [];
+    for (const file of files) {
+      const rel = (file as any).webkitRelativePath || file.name;
+      const path = `models/${id}/${rel}`;
+      const url = await uploadWithTimeout(path, file);
+      uploaded.push({ name: file.name, path, size: file.size, contentType: file.type, url });
+    }
+    const main = uploaded.find((u) => mainExts.some((ext) => u.name.toLowerCase().endsWith(ext))) || uploaded[0];
+    const docBody = {
+      id,
+      name: main?.name || files[0]?.name || 'bundle',
+      version: resolvedVersion,
+      status: 'staged',
+      uploadedAt: isoNow(),
+      sourceUrl: main?.url,
+      mainFilePath: main?.path,
+      files: uploaded.map(({ url, ...rest }) => rest),
       notes,
       userId: safeUserId()
     } satisfies ModelFile & Record<string, unknown>;

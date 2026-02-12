@@ -75,6 +75,9 @@ const LiveFeedPage = () => {
     setUploading(true);
     try {
       await videoApi.upload(file);
+      // Run a quick inference based on file size to simulate flow estimation and trigger alerts
+      const syntheticVelocity = Math.min(6, Math.max(0.3, file.size / 1_000_000));
+      await inferenceApi.velocity(syntheticVelocity, 'video-upload');
       await load();
     } catch (err: any) {
       setError(err?.response?.data?.message || 'Upload failed');

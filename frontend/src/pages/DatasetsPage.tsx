@@ -77,7 +77,7 @@ const DatasetsPage = () => {
         <div className="lg:col-span-1 space-y-3">
           <FileUpload
             label={uploading ? 'Uploading...' : 'Upload CSV / ZIP / video'}
-            accept=".csv,.zip,video/*"
+            accept=".csv,text/csv,.zip,video/*"
             onChange={onUpload}
           />
           {error && <p className="text-sm text-rose-600">{error}</p>}

@@ -51,6 +51,8 @@ export interface ModelFile {
   status: 'not-integrated' | 'staged' | 'active';
   uploadedAt: string;
   sourceUrl?: string;
+  mainFilePath?: string;
+  files?: { name: string; path: string; size?: number; contentType?: string }[];
   notes?: string;
   userId?: string;
 }

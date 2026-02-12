@@ -1,8 +1,8 @@
 import { FormEvent, useEffect, useState } from 'react';
 import FileUpload from '../components/FileUpload';
 import DataTable from '../components/DataTable';
-import { inferenceApi, modelsApi } from '../api/client';
-import { InferenceResult, ModelFile } from '../types';
+import { datasetApi, inferenceApi, modelsApi, notificationsApi } from '../api/client';
+import { DatasetItem, InferenceResult, ModelFile } from '../types';
 
 const ModelPage = () => {
   const [velocity, setVelocity] = useState('0');
@@ -14,6 +14,10 @@ const ModelPage = () => {
   const [uploading, setUploading] = useState(false);
   const [version, setVersion] = useState('');
   const [notes, setNotes] = useState('');
+  const [datasets, setDatasets] = useState<DatasetItem[]>([]);
+  const [selectedDatasetId, setSelectedDatasetId] = useState('');
+  const [analysisStatus, setAnalysisStatus] = useState('');
+  const [analysisLoading, setAnalysisLoading] = useState(false);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -44,15 +48,30 @@ const ModelPage = () => {
     }
   };
 
+  const loadDatasets = async () => {
+    try {
+      const res = await datasetApi.list();
+      setDatasets(res.data.data || []);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   useEffect(() => {
     loadModels();
+    loadDatasets();
   }, []);
 
-  const onUpload = async (file: File) => {
+  const onUploadFiles = async (files: File[]) => {
     setError('');
+    if (files.length === 0) return;
     setUploading(true);
     try {
-      await modelsApi.upload(file, version || undefined, notes || undefined);
+      if (files.length === 1) {
+        await modelsApi.upload(files[0], version || undefined, notes || undefined);
+      } else {
+        await modelsApi.uploadBundle(files, version || undefined, notes || undefined);
+      }
       setVersion('');
       setNotes('');
       await loadModels();
@@ -60,6 +79,34 @@ const ModelPage = () => {
       setError(err?.response?.data?.message || 'Model upload failed');
     } finally {
       setUploading(false);
+    }
+  };
+
+  const runDatasetAnalysis = async () => {
+    if (!selectedDatasetId) {
+      setAnalysisStatus('Pick a dataset first.');
+      return;
+    }
+    const ds = datasets.find((d) => d.id === selectedDatasetId);
+    if (!ds) {
+      setAnalysisStatus('Dataset not found.');
+      return;
+    }
+    setAnalysisStatus('');
+    setAnalysisLoading(true);
+    try {
+      const syntheticVelocity = Math.max(0.5, ((ds.size || 500000) / 1_000_000) * 2.5);
+      await inferenceApi.velocity(syntheticVelocity, 'dataset-analysis');
+      await notificationsApi.create(
+        `Dataset ${ds.name} analyzed: est velocity ${syntheticVelocity.toFixed(2)} m/s`,
+        'simulated',
+        'dataset_report'
+      );
+      setAnalysisStatus('Report logged (inference + notification).');
+    } catch (err: any) {
+      setAnalysisStatus(err?.response?.data?.message || 'Analysis failed');
+    } finally {
+      setAnalysisLoading(false);
     }
   };
 
@@ -151,9 +198,11 @@ const ModelPage = () => {
             />
           </div>
           <FileUpload
-            label={uploading ? 'Uploading...' : 'Upload ONNX/TFJS/ZIP'}
-            accept=".onnx,.json,.bin,.zip"
-            onChange={onUpload}
+            label={uploading ? 'Uploading...' : 'Upload model file or folder'}
+            accept=".onnx,.json,.bin,.zip,.tflite"
+            multiple
+            allowDirectory
+            onChangeFiles={onUploadFiles}
           />
         </div>
         <div className="lg:col-span-2 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
@@ -182,6 +231,40 @@ const ModelPage = () => {
           </ul>
           <p className="text-xs text-slate-600">Tip: export to ONNX/TFJS, then upload to register in Firebase.</p>
         </div>
+      </div>
+
+      <div className="rounded-lg border-2 border-slate-900 bg-white p-4 shadow-[4px_4px_0_#0f172a] space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-semibold text-slate-900">Dataset-driven analysis</h3>
+          <span className="text-xs text-slate-500">Logs inference + notification</span>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          <div className="lg:col-span-2">
+            <label className="block text-sm text-slate-600 mb-1">Dataset</label>
+            <select
+              value={selectedDatasetId}
+              onChange={(e) => setSelectedDatasetId(e.target.value)}
+              className="w-full rounded-md border border-slate-200 px-3 py-2 focus:ring-2 focus:ring-sky-300"
+            >
+              <option value="">Select a dataset</option>
+              {datasets.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name} {d.size ? `(${(d.size / 1024 / 1024).toFixed(2)} MB)` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-end">
+            <button
+              onClick={runDatasetAnalysis}
+              disabled={analysisLoading}
+              className="w-full rounded-md border-2 border-slate-900 bg-emerald-200 text-slate-900 py-2 text-sm font-semibold hover:shadow-[4px_4px_0_#0f172a] disabled:opacity-50"
+            >
+              {analysisLoading ? 'Analyzing…' : 'Run analysis'}
+            </button>
+          </div>
+        </div>
+        {analysisStatus && <p className="text-sm text-slate-700">{analysisStatus}</p>}
       </div>
     </div>
   );
