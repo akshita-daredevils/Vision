@@ -12,6 +12,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 200
 const port = process.env.PORT || 4000;
 const apiKey = process.env.FIREBASE_API_KEY;
 const velocityAlertThreshold = Number(process.env.VELOCITY_ALERT_THRESHOLD || '0');
+const defaultDanger = Number(process.env.VELOCITY_DANGER_THRESHOLD || '3.5');
 app.use(cors());
 app.use(express.json());
 // Health
@@ -236,7 +237,44 @@ app.get('/api/alerts', requireAuth, async (_req, res) => {
     }
 });
 // TODO: Camera stream integration
-// TODO: ML inference API
+// ML inference baseline (heuristic) for velocity
+app.post('/api/inference/velocity', requireAuth, async (req, res) => {
+    const { velocity, source = 'sensor' } = req.body;
+    if (velocity === undefined)
+        return res.status(400).json({ message: 'Velocity required' });
+    const v = Number(velocity);
+    if (Number.isNaN(v))
+        return res.status(400).json({ message: 'Velocity must be numeric' });
+    const warn = velocityAlertThreshold || 2.5;
+    const danger = defaultDanger || warn * 1.5;
+    let label = 'normal';
+    if (v >= danger)
+        label = 'danger';
+    else if (v >= warn)
+        label = 'warning';
+    const score = Math.min(1, Math.max(0, v / danger));
+    const result = {
+        velocity: v,
+        source,
+        label,
+        score,
+        thresholds: { warn, danger },
+        explanation: `Heuristic: warn >= ${warn} m/s, danger >= ${danger} m/s`
+    };
+    try {
+        const id = uuid();
+        await db.collection('inference_logs').doc(id).set({
+            id,
+            ...result,
+            userId: req.user?.uid,
+            createdAt: new Date().toISOString()
+        });
+    }
+    catch (err) {
+        console.error('Inference log write failed', err);
+    }
+    return res.json({ data: result });
+});
 app.listen(port, () => {
     console.log(`API listening on port ${port}`);
 });
