@@ -262,4 +262,8 @@ export const analyzeVideoWithRaft = async (
     framesUsed: velocities.length,
     dtStats: {
       mean: dtMean,
-      min: dts.length
+      min: dts.length ? Math.min(...dts) : 0,
+      max: dts.length ? Math.max(...dts) : 0
+    }
+  };
+};
