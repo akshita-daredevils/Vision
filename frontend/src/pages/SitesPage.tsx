@@ -14,6 +14,9 @@ const SitesPage = () => {
   const [sites, setSites] = useState<SiteItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [locating, setLocating] = useState(false);
+  const [locError, setLocError] = useState('');
+  const [userLoc, setUserLoc] = useState<{ lat: number; lon: number; accuracy: number } | null>(null);
 
   const load = async () => {
     try {
@@ -27,6 +30,27 @@ const SitesPage = () => {
   useEffect(() => {
     load();
   }, []);
+
+  const locateUser = () => {
+    if (!('geolocation' in navigator)) {
+      setLocError('Geolocation not supported in this browser.');
+      return;
+    }
+    setLocError('');
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude, longitude, accuracy } = pos.coords;
+        setUserLoc({ lat: latitude, lon: longitude, accuracy });
+        setLocating(false);
+      },
+      (err) => {
+        setLocError(err.message || 'Unable to get location');
+        setLocating(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  };
 
   const seed = async () => {
     setError('');
@@ -57,6 +81,13 @@ const SitesPage = () => {
         </div>
         <div className="space-x-2">
           <button
+            onClick={locateUser}
+            disabled={locating}
+            className="rounded-md border border-emerald-500 px-3 py-2 text-sm text-emerald-900 bg-emerald-100 hover:bg-emerald-200 disabled:opacity-50"
+          >
+            {locating ? 'Locating...' : 'Use my location'}
+          </button>
+          <button
             onClick={load}
             className="rounded-md border border-slate-300 px-3 py-2 text-sm hover:bg-slate-100"
           >
@@ -73,6 +104,26 @@ const SitesPage = () => {
       </div>
 
       {error && <p className="text-sm text-rose-600">{error}</p>}
+      {locError && <p className="text-sm text-rose-600">{locError}</p>}
+
+      {userLoc && (
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+          <div>
+            <div className="text-sm text-slate-500">Your location (browser consent)</div>
+            <div className="text-lg font-semibold text-slate-900">
+              {userLoc.lat.toFixed(5)}, {userLoc.lon.toFixed(5)}
+            </div>
+            <div className="text-xs text-slate-500">Accuracy: ±{userLoc.accuracy.toFixed(0)} m</div>
+          </div>
+          <div className="w-full h-48 overflow-hidden rounded-md border border-slate-200 bg-slate-50">
+            <img
+              alt="User location map"
+              className="w-full h-full object-cover"
+              src={`https://staticmap.openstreetmap.de/staticmap.php?center=${userLoc.lat},${userLoc.lon}&zoom=14&size=640x320&markers=${userLoc.lat},${userLoc.lon},red-pushpin`}
+            />
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
