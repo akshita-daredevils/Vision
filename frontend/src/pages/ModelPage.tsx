@@ -237,11 +237,11 @@ const ModelPage = () => {
         </div>
         <div className="rounded-lg border-2 border-slate-900 bg-white p-4 shadow-[4px_4px_0_#0f172a] space-y-2 text-sm text-slate-800">
           <h3 className="text-lg font-semibold text-slate-900">Public model references</h3>
-          <p>Start with lightweight demos; download externally then upload:</p>
+          <p>Start with lightweight models; download externally then upload:</p>
           <ul className="list-disc list-inside space-y-1">
             <li><a className="underline" href="https://github.com/isl-org/MiDaS" target="_blank" rel="noreferrer">MiDaS depth (for water surface cues)</a></li>
-            <li><a className="underline" href="https://github.com/google-research/google-research/tree/master/optical_flow" target="_blank" rel="noreferrer">Lightweight optical flow demos</a></li>
-            <li><a className="underline" href="https://huggingface.co/spaces/akhaliq/raft-small-onnx" target="_blank" rel="noreferrer">RAFT-small ONNX demo (optical flow)</a></li>
+            <li><a className="underline" href="https://github.com/google-research/google-research/tree/master/optical_flow" target="_blank" rel="noreferrer">Lightweight optical flow models</a></li>
+            <li><a className="underline" href="https://huggingface.co/spaces/akhaliq/raft-small-onnx" target="_blank" rel="noreferrer">RAFT-small ONNX (optical flow)</a></li>
           </ul>
           <p className="text-xs text-slate-600">Tip: export to ONNX/TFJS, then upload to register in Firebase.</p>
         </div>

@@ -67,7 +67,6 @@ const NotificationsPage = () => {
                 className="w-full rounded-md border border-slate-200 px-3 py-2 focus:ring-2 focus:ring-sky-300"
               >
                 <option value="emailjs">EmailJS</option>
-                <option value="simulated">Simulated</option>
                 <option value="webhook">Webhook</option>
                 <option value="email">Email</option>
                 <option value="sms">SMS</option>
