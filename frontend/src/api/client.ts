@@ -370,7 +370,7 @@ export const modelsApi = {
 };
 
 export const notificationsApi = {
-  create: async (message: string, channel = 'simulated', type = 'test') => {
+  create: async (message: string, channel = 'emailjs', type = 'alert') => {
     const id = uid();
     const docBody = {
       id,

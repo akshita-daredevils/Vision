@@ -95,6 +95,10 @@ def analyze_video_file(path: Path) -> dict:
     avg_flood_prob = float(np.mean(flood_scores))
     avg_velocity = float(np.mean(velocities)) if velocities else 0.0
 
+    # Reject obviously non-flood scenes (e.g., roads/dry areas) early
+    if avg_flood_prob < 0.2:
+        raise HTTPException(status_code=400, detail="Scene appears non-water; please upload flood-prone footage")
+
     if avg_flood_prob < 0.5:
         risk_level = "LOW"
     elif avg_velocity < 2:

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import FileUpload from '../components/FileUpload';
-import { inferenceApi, videoApi } from '../api/client';
+import { alertsApi, inferenceApi, videoApi } from '../api/client';
 import { analyzeVideoWithRaft, FlowAnalysisResult } from '../lib/raftFlow';
-import { VideoItem } from '../types';
+import { analyzeVideo } from '../api/analysis';
+import { VideoAnalysisResult, VideoItem } from '../types';
 import BackendAnalyzer from '../components/BackendAnalyzer';
 
 const LiveFeedPage = () => {
@@ -14,6 +15,7 @@ const LiveFeedPage = () => {
   const [predicting, setPredicting] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState<FlowAnalysisResult | null>(null);
+  const [backendResult, setBackendResult] = useState<VideoAnalysisResult | null>(null);
   const [metersPerPixel, setMetersPerPixel] = useState('0.01');
   const [fpsHint, setFpsHint] = useState('30');
   const [samplingMs, setSamplingMs] = useState('120');
@@ -59,11 +61,16 @@ const LiveFeedPage = () => {
     setUploading(true);
     try {
       await videoApi.upload(file);
-      // Run a quick inference based on file size to simulate flow estimation and trigger alerts
-      const syntheticVelocity = Math.min(6, Math.max(0.3, file.size / 1_000_000));
-      await inferenceApi.velocity(syntheticVelocity, 'video-upload');
+      // Automatically run backend analysis after upload
+      const result = await analyzeVideo(file);
+      setBackendResult(result);
+      if (result.risk_level === 'HIGH') {
+        await alertsApi.create(2, result.average_velocity, 'danger');
+      } else if (result.risk_level === 'MODERATE') {
+        await alertsApi.create(2, result.average_velocity, 'warning');
+      }
       await load();
-      setInfo('Uploaded and analyzed. Check alerts/notifications if thresholds were hit.');
+      setInfo('Upload completed and analysis finished.');
     } catch (err: any) {
       setError(err?.message || err?.response?.data?.message || 'Upload failed');
     } finally {
@@ -74,6 +81,10 @@ const LiveFeedPage = () => {
   const runRaftAnalysis = async () => {
     if (!active || !videoRef.current) {
       setError('Select a video first.');
+      return;
+    }
+    if (backendResult?.risk_level === 'LOW') {
+      setError('Flood probability is low; skipping velocity estimation.');
       return;
     }
     setAnalyzing(true);
@@ -104,20 +115,6 @@ const LiveFeedPage = () => {
       }
     } finally {
       setAnalyzing(false);
-    }
-  };
-
-  const runDemoInference = async () => {
-    if (!active) return;
-    setPredicting(true);
-    setError('');
-    try {
-      const syntheticVelocity = Math.max(0.1, Math.random() * 4.5);
-      await inferenceApi.velocity(syntheticVelocity, 'neuromorphic-camera-demo');
-    } catch (err: any) {
-      setError(err?.response?.data?.message || 'Inference failed');
-    } finally {
-      setPredicting(false);
     }
   };
 
@@ -153,13 +150,6 @@ const LiveFeedPage = () => {
           <FileUpload label={uploading ? 'Uploading...' : 'Upload video (mp4/avi)'} accept="video/mp4,video/x-msvideo,video/avi" onChange={onUpload} />
           {error && <p className="text-sm text-rose-600">{error}</p>}
           {info && <p className="text-sm text-emerald-600">{info}</p>}
-          <button
-            disabled={!active || predicting}
-            onClick={runDemoInference}
-            className="w-full rounded-md border-2 border-slate-900 bg-amber-200 text-slate-900 py-2 text-sm font-semibold hover:shadow-[4px_4px_0_#0f172a] disabled:opacity-50"
-          >
-            {predicting ? 'Estimating...' : 'Estimate velocity (neuromorphic demo)'}
-          </button>
           <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
             <div className="flex items-center justify-between text-sm text-slate-700">
               <span className="font-semibold text-slate-900">RAFT-small (ONNX) analysis</span>
