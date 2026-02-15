@@ -47,10 +47,14 @@ def load_model() -> None:
         custom_objects=custom_objects,
     )
 
+origins_raw = os.getenv("FRONTEND_ORIGINS", "*")
+allow_origins = [o.strip() for o in origins_raw.split(",") if o.strip()]
+use_wildcard = "*" in allow_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("FRONTEND_ORIGINS", "*").split(","),
-    allow_credentials=True,
+    allow_origins=allow_origins,
+    allow_credentials=not use_wildcard,
     allow_methods=["*"],
     allow_headers=["*"],
 )
