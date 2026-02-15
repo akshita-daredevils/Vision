@@ -25,8 +25,8 @@ def load_model() -> None:
     global model
     if not MODEL_PATH.exists():
         raise RuntimeError(f"Model file not found at {MODEL_PATH}")
-    # compile=False to avoid deserialization issues with older Keras configs (e.g., batch_shape arg)
-    model = tf.keras.models.load_model(MODEL_PATH, compile=False)
+    # compile=False + safe_mode=False to tolerate legacy configs (e.g., batch_shape in InputLayer)
+    model = tf.keras.models.load_model(MODEL_PATH, compile=False, safe_mode=False)
 
 
 app.add_middleware(
