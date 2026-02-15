@@ -25,7 +25,8 @@ def load_model() -> None:
     global model
     if not MODEL_PATH.exists():
         raise RuntimeError(f"Model file not found at {MODEL_PATH}")
-    model = tf.keras.models.load_model(MODEL_PATH)
+    # compile=False + safe_mode=False to tolerate legacy configs (e.g., batch_shape in InputLayer)
+    model = tf.keras.models.load_model(MODEL_PATH, compile=False, safe_mode=False)
 
 
 app.add_middleware(
