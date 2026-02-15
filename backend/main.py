@@ -35,7 +35,11 @@ def load_model() -> None:
     if not MODEL_PATH.exists():
         raise RuntimeError(f"Model file not found at {MODEL_PATH}")
     # compile=False + safe_mode=False to tolerate legacy configs (e.g., batch_shape in InputLayer)
-    custom_objects = {"InputLayer": InputLayerShim}
+    custom_objects = {
+        "InputLayer": InputLayerShim,
+        # Keras sometimes serializes dtype as DTypePolicy; map it back to the mixed_precision policy.
+        "DTypePolicy": tf.keras.mixed_precision.Policy,
+    }
     classifier_model = tf.keras.models.load_model(
         MODEL_PATH,
         compile=False,
