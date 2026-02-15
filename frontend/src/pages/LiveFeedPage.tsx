@@ -1,238 +1,228 @@
 import { useEffect, useRef, useState } from 'react';
 import FileUpload from '../components/FileUpload';
-import { alertsApi, inferenceApi, videoApi } from '../api/client';
-import { analyzeVideoWithRaft, FlowAnalysisResult } from '../lib/raftFlow';
 import { analyzeVideo } from '../api/analysis';
-import { VideoAnalysisResult, VideoItem } from '../types';
-import BackendAnalyzer from '../components/BackendAnalyzer';
+import { VideoAnalysisResult } from '../types';
+
+type SourceMode = 'upload' | 'camera';
 
 const LiveFeedPage = () => {
-  const [videos, setVideos] = useState<VideoItem[]>([]);
-  const [uploading, setUploading] = useState(false);
-  const [active, setActive] = useState<VideoItem | null>(null);
+  const [mode, setMode] = useState<SourceMode>('upload');
+  const [status, setStatus] = useState('Pick a source to start');
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [info, setInfo] = useState('');
-  const [predicting, setPredicting] = useState(false);
-  const [analyzing, setAnalyzing] = useState(false);
-  const [analysis, setAnalysis] = useState<FlowAnalysisResult | null>(null);
-  const [backendResult, setBackendResult] = useState<VideoAnalysisResult | null>(null);
-  const [metersPerPixel, setMetersPerPixel] = useState('0.01');
-  const [fpsHint, setFpsHint] = useState('30');
-  const [samplingMs, setSamplingMs] = useState('120');
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const overlayRef = useRef<HTMLCanvasElement | null>(null);
+  const [nonFlood, setNonFlood] = useState(false);
+  const [result, setResult] = useState<VideoAnalysisResult | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
-  const load = async () => {
-    try {
-      const res = await videoApi.list();
-      const list = res.data.data || [];
-      setVideos(list);
-      setActive(list[0] || null);
-    } catch (err) {
-      console.error(err);
-    }
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+
+  const resetPreview = () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl(null);
   };
 
-  useEffect(() => {
-    load();
+  const stopStream = () => {
+    mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
+    mediaStreamRef.current = null;
+  };
+
+  useEffect(() => () => {
+    stopStream();
+    resetPreview();
   }, []);
 
-  useEffect(() => {
-    const canvas = overlayRef.current;
-    const video = videoRef.current;
-    if (!canvas || !video) return;
-    const resize = () => {
-      canvas.width = video.clientWidth || video.videoWidth;
-      canvas.height = video.clientHeight || video.videoHeight;
-      const ctx = canvas.getContext('2d');
-      ctx?.clearRect(0, 0, canvas.width, canvas.height);
-    };
-    resize();
-    const handleResize = () => resize();
-    window.addEventListener('resize', handleResize);
-    return () => {
-      window.removeEventListener('resize', handleResize);
-    };
-  }, [active]);
-
-  const onUpload = async (file: File) => {
+  const showNonFlood = (message: string) => {
+    setNonFlood(true);
     setError('');
-    setInfo('');
-    setUploading(true);
+    setStatus(message);
+  };
+
+  const analyzeFile = async (file: File) => {
+    setLoading(true);
+    setError('');
+    setNonFlood(false);
+    setResult(null);
+    setStatus('Analyzing flood risk and velocity...');
+    const url = URL.createObjectURL(file);
+    resetPreview();
+    setPreviewUrl(url);
     try {
-      await videoApi.upload(file);
-      // Automatically run backend analysis after upload
-      const result = await analyzeVideo(file);
-      setBackendResult(result);
-      if (result.risk_level === 'HIGH') {
-        await alertsApi.create(2, result.average_velocity, 'danger');
-      } else if (result.risk_level === 'MODERATE') {
-        await alertsApi.create(2, result.average_velocity, 'warning');
+      const res = await analyzeVideo(file);
+      setResult(res);
+      if (res.risk_level === 'LOW' || res.flood_probability < 0.3) {
+        showNonFlood('No flood detected. Upload flood footage to measure velocity.');
+      } else {
+        setStatus('Velocity calculated from flood footage.');
       }
-      await load();
-      setInfo('Upload completed and analysis finished.');
     } catch (err: any) {
-      setError(err?.message || err?.response?.data?.message || 'Upload failed');
+      const message = err?.message || 'Analysis failed';
+      if (message.toLowerCase().includes('non-water') || message.toLowerCase().includes('non water')) {
+        showNonFlood('Rejected: non-flood footage detected.');
+      } else {
+        setError(message);
+        setStatus('Analysis failed');
+      }
     } finally {
-      setUploading(false);
+      setLoading(false);
     }
   };
 
-  const runRaftAnalysis = async () => {
-    if (!active || !videoRef.current) {
-      setError('Select a video first.');
-      return;
-    }
-    if (backendResult?.risk_level === 'LOW') {
-      setError('Flood probability is low; skipping velocity estimation.');
-      return;
-    }
-    setAnalyzing(true);
-    setError('');
-    setInfo('');
+  const handleUpload = async (file: File) => {
+    await analyzeFile(file);
+  };
+
+  const startCamera = async () => {
     try {
-      const result = await analyzeVideoWithRaft({
-        video: videoRef.current,
-        overlay: overlayRef.current,
-        metersPerPixel: Number(metersPerPixel) || 0.01,
-        fpsHint: Number(fpsHint) || 24,
-        sampleEveryMs: Number(samplingMs) || 120,
-        maxPairs: 28,
-        targetWidth: 416
-      });
-      setAnalysis(result);
-      const representative = result.p95 || result.average || 0;
-      if (representative > 0) {
-        await inferenceApi.velocity(Number(representative.toFixed(3)), 'raft-onnx');
+      stopStream();
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+      mediaStreamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play().catch(() => undefined);
       }
-      setInfo(`RAFT-small flow velocity ~${representative.toFixed(2)} m/s (p95). Alerts updated.`);
+      setStatus('Camera ready. Record a short clip and we will analyze it.');
+      setError('');
+      setNonFlood(false);
+      setResult(null);
     } catch (err: any) {
-      const msg = err?.message || err?.response?.data?.message;
-      if (msg?.toString().includes('model load')) {
-        setError('RAFT model missing/blocked. Set VITE_RAFT_MODEL_URL or place raft-small.onnx (+ .onnx_data) in public/models.');
-      } else {
-        setError(msg || 'RAFT analysis failed');
-      }
-    } finally {
-      setAnalyzing(false);
+      setError(err?.message || 'Unable to access camera');
+      setStatus('Camera not available');
     }
+  };
+
+  const startRecording = () => {
+    if (!mediaStreamRef.current) {
+      setError('Start the camera first.');
+      return;
+    }
+    chunksRef.current = [];
+    const recorder = new MediaRecorder(mediaStreamRef.current, { mimeType: 'video/webm' });
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunksRef.current.push(e.data);
+    };
+    recorder.onstop = async () => {
+      const blob = new Blob(chunksRef.current, { type: 'video/webm' });
+      const file = new File([blob], 'capture.webm', { type: 'video/webm' });
+      await analyzeFile(file);
+    };
+    recorder.start();
+    recorderRef.current = recorder;
+    setStatus('Recording... Press stop to analyze.');
+    setError('');
+  };
+
+  const stopRecording = () => {
+    if (!recorderRef.current) return;
+    setStatus('Processing recording...');
+    recorderRef.current.stop();
+  };
+
+  const modeButton = (value: SourceMode, label: string) => (
+    <button
+      className={`px-3 py-2 text-sm font-semibold rounded-md border ${mode === value ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200'}`}
+      onClick={() => {
+        setMode(value);
+        setError('');
+        setResult(null);
+        setNonFlood(false);
+        setStatus(value === 'upload' ? 'Choose a video to analyze.' : 'Start camera to capture a clip.');
+        if (value === 'upload') {
+          stopStream();
+        }
+      }}
+    >
+      {label}
+    </button>
+  );
+
+  const renderResult = () => {
+    if (nonFlood) {
+      return (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+          No flood detected. Upload flood footage to get velocity measurements.
+        </div>
+      );
+    }
+    if (!result) return null;
+    return (
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs text-slate-500">Flood probability (confidence)</p>
+          <p className="text-2xl font-semibold text-slate-900">{(result.flood_probability * 100).toFixed(1)}%</p>
+        </div>
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs text-slate-500">Risk level</p>
+          <p className="text-xl font-semibold text-slate-900">{result.risk_level}</p>
+        </div>
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs text-slate-500">Average velocity</p>
+          <p className="text-2xl font-semibold text-slate-900">{result.average_velocity.toFixed(2)} m/s</p>
+        </div>
+      </div>
+    );
   };
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-semibold text-slate-900">Live Feed</h2>
-          <p className="text-sm text-slate-500">Manage video inputs and playback</p>
+          <h2 className="text-2xl font-semibold text-slate-900">Live Analysis</h2>
+          <p className="text-sm text-slate-500">Choose capture or upload, then we run the flood model and velocity estimation.</p>
         </div>
-        <span className="text-xs text-slate-400">// TODO: Camera stream integration</span>
+        <div className="flex gap-2">{modeButton('upload', 'Upload video')}{modeButton('camera', 'Capture from camera')}</div>
       </div>
-
-      <BackendAnalyzer />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 rounded-lg border border-slate-200 bg-black aspect-video overflow-hidden">
-          {active ? (
-            <div className="relative w-full h-full">
-              <video
-                ref={videoRef}
-                src={active.url}
-                controls
-                className="w-full h-full object-contain bg-black"
-              />
-              <canvas ref={overlayRef} className="absolute inset-0 pointer-events-none mix-blend-screen" />
-            </div>
-          ) : (
-            <div className="h-full flex items-center justify-center text-slate-200">No video selected</div>
-          )}
+          <video
+            ref={videoRef}
+            src={previewUrl || undefined}
+            controls
+            autoPlay
+            muted
+            playsInline
+            className="w-full h-full object-contain bg-black"
+          />
         </div>
+
         <div className="space-y-4">
-          <FileUpload label={uploading ? 'Uploading...' : 'Upload video (mp4/avi)'} accept="video/mp4,video/x-msvideo,video/avi" onChange={onUpload} />
-          {error && <p className="text-sm text-rose-600">{error}</p>}
-          {info && <p className="text-sm text-emerald-600">{info}</p>}
-          <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
-            <div className="flex items-center justify-between text-sm text-slate-700">
-              <span className="font-semibold text-slate-900">RAFT-small (ONNX) analysis</span>
-              <span className="text-xs text-slate-500">Optical flow</span>
-            </div>
-            <div className="grid grid-cols-3 gap-2 text-xs">
-              <label className="space-y-1">
-                <span className="block text-slate-500">Meters/pixel</span>
-                <input
-                  value={metersPerPixel}
-                  onChange={(e) => setMetersPerPixel(e.target.value)}
-                  className="w-full rounded-md border border-slate-200 px-2 py-1"
-                  type="number"
-                  step="0.0001"
-                />
-              </label>
-              <label className="space-y-1">
-                <span className="block text-slate-500">FPS hint</span>
-                <input
-                  value={fpsHint}
-                  onChange={(e) => setFpsHint(e.target.value)}
-                  className="w-full rounded-md border border-slate-200 px-2 py-1"
-                  type="number"
-                  step="1"
-                />
-              </label>
-              <label className="space-y-1">
-                <span className="block text-slate-500">Sample ms</span>
-                <input
-                  value={samplingMs}
-                  onChange={(e) => setSamplingMs(e.target.value)}
-                  className="w-full rounded-md border border-slate-200 px-2 py-1"
-                  type="number"
-                  step="10"
-                />
-              </label>
-            </div>
-            <button
-              disabled={!active || analyzing}
-              onClick={runRaftAnalysis}
-              className="w-full rounded-md border-2 border-slate-900 bg-sky-200 text-slate-900 py-2 text-sm font-semibold hover:shadow-[4px_4px_0_#0f172a] disabled:opacity-50"
-            >
-              {analyzing ? 'Analyzing with RAFT…' : 'Analyze with RAFT-small (ONNX)'}
-            </button>
-            {analysis && (
-              <div className="grid grid-cols-2 gap-2 text-xs text-slate-700">
-                <div className="rounded-md bg-slate-50 border border-slate-200 p-2">
-                  <div className="text-slate-500">p95 velocity</div>
-                  <div className="text-lg font-semibold text-slate-900">{analysis.p95.toFixed(2)} m/s</div>
-                </div>
-                <div className="rounded-md bg-slate-50 border border-slate-200 p-2">
-                  <div className="text-slate-500">Mean / Max</div>
-                  <div className="text-lg font-semibold text-slate-900">{analysis.average.toFixed(2)} / {analysis.max.toFixed(2)} m/s</div>
-                </div>
-                <div className="rounded-md bg-slate-50 border border-slate-200 p-2">
-                  <div className="text-slate-500">Samples</div>
-                  <div className="text-sm font-semibold text-slate-900">{analysis.framesUsed} pairs</div>
-                </div>
-                <div className="rounded-md bg-slate-50 border border-slate-200 p-2">
-                  <div className="text-slate-500">Δt mean</div>
-                  <div className="text-sm font-semibold text-slate-900">{(analysis.dtStats.mean * 1000).toFixed(0)} ms</div>
-                </div>
+          {mode === 'upload' ? (
+            <FileUpload label={loading ? 'Analyzing...' : 'Upload flood video (mp4/avi/webm)'} accept="video/*" onChange={handleUpload} />
+          ) : (
+            <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm space-y-3">
+              <p className="text-sm font-semibold text-slate-900">Camera capture</p>
+              <div className="flex gap-2 flex-wrap">
+                <button
+                  onClick={startCamera}
+                  className="px-3 py-2 text-sm font-semibold rounded-md border border-slate-200 bg-white hover:border-slate-400"
+                >
+                  Start camera
+                </button>
+                <button
+                  onClick={startRecording}
+                  className="px-3 py-2 text-sm font-semibold rounded-md border border-slate-900 bg-slate-900 text-white hover:opacity-90"
+                >
+                  Record clip
+                </button>
+                <button
+                  onClick={stopRecording}
+                  className="px-3 py-2 text-sm font-semibold rounded-md border border-emerald-500 bg-emerald-50 text-emerald-700 hover:border-emerald-600"
+                >
+                  Stop & analyze
+                </button>
               </div>
-            )}
-          </div>
-          <div className="rounded-lg border border-slate-200 bg-white divide-y divide-slate-100">
-            {videos.map((video) => (
-              <button
-                key={video.id}
-                className={`w-full text-left px-4 py-3 text-sm hover:bg-slate-50 ${
-                  active?.id === video.id ? 'bg-slate-100' : ''
-                }`}
-                onClick={() => {
-                  setActive(video);
-                  setAnalysis(null);
-                }}
-              >
-                <div className="font-medium text-slate-900">{video.name}</div>
-                <div className="text-xs text-slate-500">{new Date(video.createdAt).toLocaleString()}</div>
-              </button>
-            ))}
-            {videos.length === 0 && <p className="p-4 text-sm text-slate-500">No uploads yet</p>}
-          </div>
+              <p className="text-xs text-slate-500">Record a short flood clip (5-10s). After stop, we upload and analyze automatically.</p>
+            </div>
+          )}
+
+          {loading && <p className="text-sm text-slate-600">Calculating velocity with the model…</p>}
+          {error && <p className="text-sm text-rose-600">{error}</p>}
+          <p className="text-sm text-slate-700">{status}</p>
+
+          {renderResult()}
         </div>
       </div>
     </div>
