@@ -16,18 +16,32 @@ MODEL_PATH = Path(os.getenv("MODEL_PATH", Path(__file__).parent / "flood_classif
 ALLOWED_TYPES = {"video/mp4", "video/avi", "video/x-msvideo"}
 
 app = FastAPI(title="Flood Monitoring AI", version="1.0.0")
-model: Optional[tf.keras.Model] = None
+classifier_model: Optional[tf.keras.Model] = None
+
+
+class InputLayerShim(tf.keras.layers.InputLayer):
+    """Accept legacy configs that pass batch_shape instead of batch_input_shape."""
+
+    def __init__(self, *args, batch_shape=None, **kwargs):
+        if batch_shape is not None and "batch_input_shape" not in kwargs:
+            kwargs["batch_input_shape"] = tuple(batch_shape)
+        super().__init__(*args, **kwargs)
 
 
 @app.on_event("startup")
 def load_model() -> None:
     """Load the TensorFlow classifier once at startup."""
-    global model
+    global classifier_model
     if not MODEL_PATH.exists():
         raise RuntimeError(f"Model file not found at {MODEL_PATH}")
     # compile=False + safe_mode=False to tolerate legacy configs (e.g., batch_shape in InputLayer)
-    model = tf.keras.models.load_model(MODEL_PATH, compile=False, safe_mode=False)
-
+    custom_objects = {"InputLayer": InputLayerShim}
+    classifier_model = tf.keras.models.load_model(
+        MODEL_PATH,
+        compile=False,
+        safe_mode=False,
+        custom_objects=custom_objects,
+    )
 
 app.add_middleware(
     CORSMiddleware,
@@ -40,12 +54,12 @@ app.add_middleware(
 
 def predict_flood_probability(frame: np.ndarray) -> float:
     """Resize, normalize, and run the TensorFlow classifier."""
-    if model is None:
+    if classifier_model is None:
         raise RuntimeError("Model not loaded")
     resized = cv2.resize(frame, (128, 128))
     normalized = resized.astype("float32") / 255.0
     batch = np.expand_dims(normalized, axis=0)
-    prediction = model.predict(batch, verbose=0)
+    prediction = classifier_model.predict(batch, verbose=0)
     return float(np.squeeze(prediction))
 
 
