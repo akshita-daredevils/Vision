@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -13,7 +14,10 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 MODEL_PATH = Path(os.getenv("MODEL_PATH", Path(__file__).parent / "flood_classifier.h5"))
-ALLOWED_TYPES = {"video/mp4", "video/avi", "video/x-msvideo"}
+ALLOWED_TYPES = {"video/mp4", "video/avi", "video/x-msvideo", "video/webm"}
+FRAME_STRIDE = int(os.getenv("FRAME_STRIDE", "2"))  # analyze every Nth frame to speed up
+MAX_FRAMES = int(os.getenv("MAX_FRAMES", "360"))  # cap total analyzed frames
+MAX_PROCESS_SECONDS = float(os.getenv("MAX_PROCESS_SECONDS", "25"))  # guardrail to keep under ~30s
 
 app = FastAPI(title="Flood Monitoring AI", version="1.0.0")
 classifier_model: Optional[tf.keras.Model] = None
@@ -95,12 +99,21 @@ def analyze_video_file(path: Path) -> dict:
     flood_scores: list[float] = []
     velocities: list[float] = []
     prev_gray: Optional[np.ndarray] = None
+    processed_frames = 0
+    truncated = False
+    started_at = time.monotonic()
+    frame_idx = 0
 
     try:
         while True:
             ok, frame = cap.read()
             if not ok:
                 break
+            frame_idx += 1
+            if FRAME_STRIDE > 1 and frame_idx % FRAME_STRIDE != 1:
+                continue
+            processed_frames += 1
+
             flood_prob = predict_flood_probability(frame)
             flood_scores.append(flood_prob)
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -109,6 +122,11 @@ def analyze_video_file(path: Path) -> dict:
                 if velocity is not None:
                     velocities.append(velocity)
             prev_gray = gray
+
+            elapsed = time.monotonic() - started_at
+            if processed_frames >= MAX_FRAMES or elapsed >= MAX_PROCESS_SECONDS:
+                truncated = True
+                break
     finally:
         cap.release()
 
@@ -133,6 +151,8 @@ def analyze_video_file(path: Path) -> dict:
         "flood_probability": avg_flood_prob,
         "average_velocity": avg_velocity,
         "risk_level": risk_level,
+        "frames_processed": processed_frames,
+        "truncated": truncated,
     }
 
 
